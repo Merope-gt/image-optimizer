@@ -1,0 +1,258 @@
+<!--Personal project/learning experiment-->
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Universal Image Converter</title>
+    <!-- Library to handle HEIC conversion -->
+    <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
+    <style>
+        body { font-family: system-ui, sans-serif; padding: 20px; background: #f4f7f6; color: #333; }
+        .card { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-width: 450px; margin: auto; }
+        h2 { margin: 0 0 20px; text-align: center; color: #007bff; }
+        label { display: block; margin: 15px 0 5px; font-weight: 600; font-size: 0.9rem; }
+        input, select, button { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 10px; box-sizing: border-box; font-size: 1rem; }
+        
+        .btn-group { display: flex; gap: 10px; margin-top: 20px; }
+        button { border: none; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        #convertBtn { background: #007bff; color: white; }
+        #previewBtn { background: #6c757d; color: white; }
+        button:active { transform: scale(0.98); opacity: 0.9; }
+
+        .setting-box { background: #f9f9f9; padding: 15px; border-radius: 10px; margin-top: 15px; border: 1px solid #eee; }
+        #statusContainer { margin-top: 15px; font-size: 0.85rem; text-align: center; font-weight: bold; color: #555; }
+        .hidden { display: none; }
+        .slider-val { float: right; color: #007bff; }
+        .size-info { color: #28a745; display: block; margin-bottom: 5px; }
+        .compat-note { font-size: 0.75rem; color: #d63031; margin-top: 5px; display: none; }
+
+        #previewOverlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.95); display: none; align-items: center;
+            justify-content: center; flex-direction: column; z-index: 1000;
+        }
+        #previewOverlay img { 
+            max-width: 90%; max-height: 75%; border-radius: 8px; 
+            box-shadow: 0 0 30px rgba(0,0,0,0.5); 
+            background-image: linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%);
+            background-size: 20px 20px; background-position: 0 0, 0 10px, 10px -10px, -10px 0px; background-color: white;
+        }
+        
+        .preview-footer { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 20px; }
+        #closePreview { padding: 12px 30px; background: #ff4757; color: white; border-radius: 50px; width: auto; }
+        .preview-size { color: white; font-weight: bold; font-size: 1.1rem; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>⭐ Image Converter ⭐</h2>
+    
+    <label>Step 1: Select Images (Supports HEIC/WebP/JPG/PNG)</label>
+    <input type="file" id="fileInput" accept="image/*,.heic,.HEIC" multiple>
+
+    <label>Step 2: Output Format</label>
+    <select id="format">
+        <option value="image/webp">WebP (2010 Compression / Recommended)</option>
+<!--        <option value="image/avif">AVIF (2019 Compression)</option> -->
+<!--   AVIF Disabled because browsers are stupid -->
+        <option value="image/jpeg">JPEG (1992 Compression / No Transparency)</option>
+        <option value="image/png">PNG (No Compression)</option>
+    </select>
+    <div id="avifNote" class="compat-note">Note: Browser may ignore quality for AVIF.</div>
+
+    <div id="qualityContainer" class="setting-box">
+        <label>Quality: <span id="qVal" class="slider-val">100%</span></label>
+        <input type="range" id="quality" min="1" max="100" value="100">
+    </div>
+
+    <div class="setting-box">
+        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+            <input type="checkbox" id="removeBg" style="width: auto;"> Enable Background Removal
+        </label>
+        <div id="bgOptions" class="hidden">
+            <label>Color to Remove</label>
+            <input type="color" id="bgColor" value="#ffffff">
+            <label>Tolerance</label>
+            <input type="range" id="tolerance" min="0" max="100" value="15">
+        </div>
+    </div>
+
+    <div class="btn-group">
+        <button id="previewBtn">Preview</button>
+        <button id="convertBtn">Convert & Save</button>
+    </div>
+    
+    <div id="statusContainer">
+        <div id="sizeStatus" class="size-info"></div>
+        <div id="statusText">Ready</div>
+    </div>
+</div>
+
+<div id="previewOverlay">
+    <img id="previewImg" src="">
+    <div class="preview-footer">
+        <span id="previewSizeText" class="preview-size"></span>
+        <button id="closePreview">Exit Preview</button>
+    </div>
+</div>
+
+<canvas id="canvas" class="hidden"></canvas>
+
+<script>
+    const controls = {
+        fileInput: document.getElementById('fileInput'),
+        format: document.getElementById('format'),
+        quality: document.getElementById('quality'),
+        qVal: document.getElementById('qVal'),
+        qContainer: document.getElementById('qualityContainer'),
+        avifNote: document.getElementById('avifNote'),
+        removeBg: document.getElementById('removeBg'),
+        bgOptions: document.getElementById('bgOptions'),
+        convertBtn: document.getElementById('convertBtn'),
+        previewBtn: document.getElementById('previewBtn'),
+        statusText: document.getElementById('statusText'),
+        sizeStatus: document.getElementById('sizeStatus'),
+        canvas: document.getElementById('canvas'),
+        ctx: document.getElementById('canvas').getContext('2d'),
+        overlay: document.getElementById('previewOverlay'),
+        previewImg: document.getElementById('previewImg'),
+        previewSizeText: document.getElementById('previewSizeText'),
+        closePreview: document.getElementById('closePreview')
+    };
+
+    function formatBytes(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    function getFileSize(dataUrl) {
+        const head = dataUrl.indexOf(',') + 1;
+        return Math.round((dataUrl.length - head) * 0.75);
+    }
+
+    function getComparisonString(original, compressed) {
+        const diff = original - compressed;
+        const percent = Math.max(0, Math.floor((diff / original) * 100));
+        return `${formatBytes(original)} → ${formatBytes(compressed)} (${percent}% saved)`;
+    }
+
+    controls.quality.oninput = () => controls.qVal.innerText = controls.quality.value + "%";
+
+    controls.format.onchange = () => {
+        const val = controls.format.value;
+        controls.qContainer.classList.toggle('hidden', val === 'image/png');
+        controls.avifNote.style.display = (val === 'image/avif') ? 'block' : 'none';
+    };
+
+    controls.removeBg.onchange = () => {
+        controls.bgOptions.classList.toggle('hidden', !controls.removeBg.checked);
+    };
+
+    controls.closePreview.onclick = () => {
+        controls.overlay.style.display = 'none';
+        controls.previewImg.src = ''; 
+    };
+
+    controls.previewBtn.onclick = async () => {
+        const file = controls.fileInput.files[0];
+        if (!file) return alert("Please select a file first.");
+        
+        controls.statusText.innerText = "Processing (HEIC may take a moment)...";
+        const dataUrl = await processFile(file, false);
+        
+        const originalSize = file.size;
+        const compressedSize = getFileSize(dataUrl);
+        const comparison = getComparisonString(originalSize, compressedSize);
+
+        controls.previewImg.src = dataUrl;
+        controls.previewSizeText.innerText = comparison;
+        controls.sizeStatus.innerText = comparison;
+        controls.overlay.style.display = 'flex';
+        controls.statusText.innerText = "Preview Ready";
+    };
+
+    controls.convertBtn.onclick = async () => {
+        const files = controls.fileInput.files;
+        if (files.length === 0) return alert("Please select a file.");
+        controls.statusText.innerText = "Processing...";
+        controls.sizeStatus.innerText = "";
+        for (let file of files) { await processFile(file, true); }
+        controls.statusText.innerText = "All Done!";
+    };
+
+    async function processFile(file, shouldDownload) {
+        let currentFile = file;
+
+        // Check for HEIC/HEIF
+        if (file.name.toLowerCase().endsWith('.heic') || file.name.toLowerCase().endsWith('.heif')) {
+            try {
+                // Convert HEIC to a readable Blob (JPEG)
+                const convertedBlob = await heic2any({
+                    blob: file,
+                    toType: "image/jpeg",
+                    quality: 0.9
+                });
+                // If heic2any returns an array (multiple images in one HEIC), take the first
+                currentFile = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
+            } catch (e) {
+                console.error("HEIC conversion failed", e);
+                alert("Failed to read HEIC file.");
+                return;
+            }
+        }
+
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    const res = applyProcessing(img, file.name, shouldDownload);
+                    resolve(res);
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(currentFile);
+        });
+    }
+
+    function applyProcessing(img, originalName, shouldDownload) {
+        const { canvas, ctx, format, quality, removeBg } = controls;
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+
+        if (removeBg.checked) {
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
+            const hex = document.getElementById('bgColor').value;
+            const rT = parseInt(hex.slice(1,3), 16), gT = parseInt(hex.slice(3,5), 16), bT = parseInt(hex.slice(5,7), 16);
+            const tol = (document.getElementById('tolerance').value / 100) * 255;
+            for (let i = 0; i < data.length; i += 4) {
+                if (Math.abs(data[i]-rT)<=tol && Math.abs(data[i+1]-gT)<=tol && Math.abs(data[i+2]-bT)<=tol) data[i+3] = 0;
+            }
+            ctx.putImageData(imageData, 0, 0);
+        }
+
+        const mime = format.value;
+        const q = parseInt(quality.value) / 100;
+        const dataUrl = canvas.toDataURL(mime, q);
+        
+        if (shouldDownload) {
+            const link = document.createElement('a');
+            // Force correct extension for download
+            let ext = mime.split('/')[1].replace('jpeg', 'jpg');
+            link.download = originalName.split('.')[0] + "." + ext;
+            link.href = dataUrl;
+            link.click();
+        }
+        return dataUrl;
+    }
+</script>
+</body>
+</html>
